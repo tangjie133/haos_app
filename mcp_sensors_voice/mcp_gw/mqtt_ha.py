@@ -231,6 +231,22 @@ class HaMqttBridge:
         rec = self.registry.get(device_id)
         if rec is None:
             rec = self.registry.ensure_mqtt_device(device_id)
+            log.info(
+                "MQTT 先到、尚无局域网 IP id=%s（仅事件/在线；温湿度等快照待补绑 IP）",
+                device_id,
+            )
+            # 尽快解析 mcp-sensors-<id>.local / 补扫，避免第二台只有事件没有传感器
+            async def _bind_later() -> None:
+                try:
+                    from .lan_discover import bind_missing_hosts
+
+                    n = await bind_missing_hosts(self.registry)
+                    if n:
+                        log.info("MQTT 触发补绑成功 %s 台", n)
+                except Exception as e:
+                    log.debug("MQTT 触发补绑失败: %s", e)
+
+            asyncio.create_task(_bind_later(), name=f"bind-ip-{device_id}")
         if kind not in ("event", "events"):
             return
         log.info("MQTT 入站 %s %s", topic, raw[:160].replace("\n", " "))

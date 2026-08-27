@@ -10,7 +10,7 @@ import httpx
 
 from . import config
 from .coap_client import DeviceCoapClient
-from .lan_discover import scan_http_hubs
+from .lan_discover import bind_missing_hosts, scan_http_hubs
 from .mqtt_ha import HaMqttBridge
 from .registry import DeviceRegistry
 
@@ -32,6 +32,7 @@ class CoapSnapshotPoller:
         self._empty_n = 0
         self._last_scan = 0.0
         self._last_rescan = 0.0
+        self._last_bind = 0.0
 
     async def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name="coap-snapshot")
@@ -77,10 +78,18 @@ class CoapSnapshotPoller:
         log.info("快照轮询 %.1fs：先 HTTP /api/data，多设备并行", interval)
         await asyncio.sleep(2)
         while True:
+            now = asyncio.get_running_loop().time()
+            missing = [r for r in self.registry.list_all() if not r.has_coap()]
+            # 仅 MQTT 进表、无 IP 的设备：优先主机名补绑，否则温湿度永远出不来
+            if missing and now - self._last_bind > 15:
+                self._last_bind = now
+                n = await bind_missing_hosts(self.registry)
+                if n:
+                    log.info("为 %s 台无 IP 设备补绑/扫描成功", n)
+
             hubs = [r for r in self.registry.list_all() if r.has_coap()]
             if not hubs:
                 self._empty_n += 1
-                now = asyncio.get_running_loop().time()
                 if now - self._last_scan > 45:
                     self._last_scan = now
                     log.info("registry 仍空，自动扫描局域网 HTTP /api/data（mDNS 组播可能未到）")
@@ -94,12 +103,13 @@ class CoapSnapshotPoller:
                     )
             else:
                 self._empty_n = 0
-                now = asyncio.get_running_loop().time()
-                if now - self._last_rescan > 180:
+                # 仍有设备缺 IP 时加快补扫（否则要等 180s，第二台只有事件没有温湿度）
+                rescan_every = 30.0 if missing else 180.0
+                if now - self._last_rescan > rescan_every:
                     self._last_rescan = now
                     n = await scan_http_hubs(self.registry)
                     if n:
-                        log.info("补扫局域网，新登记 %s 台（已有枢纽时仍找后上电的设备）", n)
+                        log.info("补扫局域网，新登记/补绑 %s 台", n)
                     hubs = [r for r in self.registry.list_all() if r.has_coap()]
             if hubs:
                 await asyncio.gather(*(self._poll_one(rec) for rec in hubs))

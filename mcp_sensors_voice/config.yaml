@@ -1,8 +1,7 @@
 name: "MCP Sensors + Voice"
-version: "0.4.2"
+version: "0.4.3"
 slug: mcp_sensors_voice
 description: "装好 Mosquitto 和本 App 即可。传感器自动出现在 HA；语音走 Assist。不必拷自定义集成。"
-url: "https://developers.home-assistant.io/docs/apps/tutorial"
 arch:
   - amd64
   - aarch64

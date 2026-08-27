@@ -110,6 +110,63 @@ async def _probe(ip: str, mac: str) -> tuple[str, str, dict[str, Any]] | None:
     return did, ip, data
 
 
+async def bind_missing_hosts(registry: DeviceRegistry) -> int:
+    """给仅 MQTT 进表、尚无局域网 IP 的设备补上地址（否则拉不到温湿度快照）。
+
+    优先解析 mcp-sensors-<id>.local，再快速扫网段里未登记的 IP。
+    """
+    missing = [r for r in registry.list_all() if not r.has_coap()]
+    if not missing:
+        return 0
+    bound = 0
+    for rec in missing:
+        host = await _resolve_hostname(f"mcp-sensors-{rec.id}.local")
+        if not host:
+            host = await _resolve_hostname(f"{rec.id}.local")
+        if not host or _skip_ip(host):
+            continue
+        hit = await _probe(host, "")
+        if not hit:
+            continue
+        did, hip, _data = hit
+        if did and did != rec.id:
+            log.warning("主机名解析到 id=%s 但期望 %s，跳过 %s", did, rec.id, hip)
+            continue
+        registry.upsert(
+            device_id=rec.id,
+            base_url=f"http://{hip}",
+            name=rec.name or rec.id,
+            fw=hip,
+            coap_host=hip,
+            coap_port=5683,
+        )
+        bound += 1
+        log.info("补绑局域网 IP id=%s ip=%s（此前仅有 MQTT 事件）", rec.id, hip)
+        from .device_mqtt import push_if_missing
+
+        asyncio.create_task(push_if_missing(hip), name=f"mqtt-push-bind-{rec.id}")
+
+    still = [r for r in registry.list_all() if not r.has_coap()]
+    if still:
+        # 主机名失败时扫一段，专门回填缺 IP 的设备
+        n = await scan_http_hubs(registry)
+        bound += n
+    return bound
+
+
+async def _resolve_hostname(name: str) -> str:
+    try:
+        loop = asyncio.get_running_loop()
+        infos = await loop.getaddrinfo(name, 80, type=socket.SOCK_STREAM)
+    except Exception:
+        return ""
+    for info in infos:
+        ip = info[4][0]
+        if ip and ":" not in ip and not ip.startswith("127."):
+            return ip
+    return ""
+
+
 async def scan_http_hubs(registry: DeviceRegistry) -> int:
     arp = _arp_ips()
     prefixes = _local_prefixes()
@@ -174,3 +231,7 @@ async def scan_http_hubs(registry: DeviceRegistry) -> int:
         log.info("LAN 扫描 %s.1-254 /api/data（多设备不会在 ARP 命中后停）", prefixes[0] if prefixes else "?")
         await asyncio.gather(*rest)
     return found
+
+
+
+
