@@ -17,7 +17,7 @@ if [[ -z "${SUPERVISOR_TOKEN:-}" ]]; then
 fi
 
 python3 - <<'PY'
-import json, os, shlex
+import json, os, shlex, socket
 from pathlib import Path
 
 opts = {}
@@ -58,36 +58,85 @@ sup = (
     or from_proc1("HASSIO_TOKEN")
     or ""
 ).strip()
+SKIP = ("127.", "172.17.", "172.18.", "172.19.", "172.30.", "192.168.122.", "10.8.", "169.254.")
+
+
+def _lan_ok(ip: str) -> bool:
+    ip = (ip or "").strip().split("/")[0]
+    if ip.count(".") != 3:
+        return False
+    return not ip.startswith(SKIP)
+
+
+def guess_lan_ip(token: str) -> str:
+    if token:
+        try:
+            import urllib.request
+
+            req = urllib.request.Request(
+                "http://supervisor/network/info",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                payload = json.loads(resp.read().decode("utf-8", "replace"))
+            data = payload.get("data") or payload
+            ifaces = data.get("interfaces") or []
+            primary = ""
+            for iface in ifaces:
+                if not isinstance(iface, dict):
+                    continue
+                ipv4 = iface.get("ipv4") or {}
+                addrs = ipv4.get("address") or []
+                if isinstance(addrs, str):
+                    addrs = [addrs]
+                for item in addrs:
+                    ip = str(item).split("/")[0].strip()
+                    if not _lan_ok(ip):
+                        continue
+                    if iface.get("primary"):
+                        return ip
+                    if not primary:
+                        primary = ip
+            if primary:
+                return primary
+        except Exception as e:
+            print(f"[haos_app] 自动探测局域网 IP 失败: {e}")
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if _lan_ok(ip):
+            return ip
+    except OSError:
+        pass
+    return ""
+
+
 manual = g("ha_token").strip()
-# 长期令牌只用于 Core :8123；不要拿它去打 Supervisor 代理（会 401）
-ha_url = g("ha_url").strip()
-if not ha_url:
-    adv = g("advertise_ip").strip()
-    if manual and adv:
-        # 与浏览器打开 HA 的地址一致；很多 HAOS 是 80 而不是 8123
-        ha_url = f"http://{adv}"
-    elif manual:
-        ha_url = "http://127.0.0.1"
+adv = g("advertise_ip").strip()
+if not _lan_ok(adv):
+    guessed = guess_lan_ip(sup)
+    if guessed:
+        adv = guessed
+        print(f"[haos_app] 局域网 IP 自动探测为 {adv}")
+    elif adv:
+        print(f"[haos_app] 局域网 IP {adv} 不可用，请改成 HA 在 WiFi/有线网的地址")
     else:
-        ha_url = "http://supervisor/core"
+        print("[haos_app] 未能自动探测局域网 IP。设备连 MQTT/语音需要填 advertise_ip")
+
+# 语音默认走 Supervisor 代理，不必填 HA 网址和长期令牌
+ha_url = g("ha_url").strip() or "http://supervisor/core"
 
 mqtt_raw = g("mqtt_host").strip()
-adv = g("advertise_ip").strip()
 loopback = mqtt_raw.lower() in ("127.0.0.1", "localhost", "0.0.0.0", "::1", "")
-# App 在 host 网络里可以连 127.0.0.1；设备绝对不能用这个地址
 mqtt_connect = "127.0.0.1" if loopback else mqtt_raw
-mqtt_advertise = adv if loopback else (mqtt_raw or adv)
-if loopback:
-    print(
-        "[haos_app] MQTT 填了 127.0.0.1/留空：仅本 App 连 Mosquitto。"
-        "设备将使用局域网 IP 广播 mqtt=；请确认 advertise_ip 已填（如 192.168.1.210）"
-    )
-    if not adv:
-        print(
-            "[haos_app] 未填局域网 IP：mDNS 可能广播 127.0.0.1，设备无法上报事件"
-        )
-if mqtt_advertise.lower() in ("127.0.0.1", "localhost"):
-    print("[haos_app] 错误：给设备的 MQTT 地址仍是 127.0.0.1，事件上报会失败")
+mqtt_advertise = adv if loopback else (mqtt_raw if _lan_ok(mqtt_raw) else adv)
+mqtt_port = g("mqtt_port").strip() or "1883"
+mqtt_prefix = g("mqtt_prefix").strip() or "mcp_sensors"
+
+if not _lan_ok(mqtt_advertise):
+    print("[haos_app] 给设备的 MQTT 地址无效（不能是 127.0.0.1），事件可能发不出来")
 
 env = {
     "MCP_GW_HOST": "0.0.0.0",
@@ -97,26 +146,27 @@ env = {
     "MCP_GW_VOICE_WS_PATH": "/ws",
     "MQTT_ENABLE": "1",
     "MQTT_HOST": mqtt_connect,
-    "MQTT_PORT": g("mqtt_port", "1883"),
+    "MQTT_PORT": mqtt_port,
     "MQTT_USER": g("mqtt_user"),
     "MQTT_PASSWORD": g("mqtt_password"),
-    "MQTT_PREFIX": g("mqtt_prefix", "mcp_sensors"),
+    "MQTT_PREFIX": mqtt_prefix,
     "MQTT_CLIENT_ID": "mcp-sensors-gw",
     "MQTT_DISCOVERY": "1",
     "MQTT_ADVERTISE_HOST": mqtt_advertise,
     "MCP_GW_ADVERTISE_IP": adv,
     "DASHSCOPE_API_KEY": g("dashscope_api_key"),
-    "HA_LANGUAGE": g("language", "zh-CN"),
+    "HA_LANGUAGE": g("language").strip() or "zh-CN",
     "HA_AGENT_ID": g("conversation_agent"),
     "HA_URL": ha_url,
     "HA_LLAT": manual,
-    "TTS_VOICE": g("tts_voice", "longanyang"),
-    "TTS_VOLUME": g("tts_volume", "100"),
+    "TTS_VOICE": g("tts_voice").strip() or "longanyang",
+    "TTS_VOLUME": g("tts_volume").strip() or "100",
     "USE_STREAM_TTS": "0",
 }
 
 print(
-    f"[haos_app] HA_URL={ha_url} supervisor_len={len(sup)} llat_len={len(manual)}"
+    f"[haos_app] lan={adv or '-'} mqtt_dev={mqtt_advertise or '-'} "
+    f"HA_URL={ha_url} supervisor_len={len(sup)} llat_len={len(manual)}"
 )
 if not g("mqtt_user") and not g("mqtt_password"):
     print("[haos_app] MQTT 用户/密码为空：若 Mosquitto 要求登录会出现 Not authorized (135)")

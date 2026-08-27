@@ -1,5 +1,5 @@
 name: "MCP Sensors + Voice"
-version: "0.2.23"
+version: "0.3.0"
 slug: mcp_sensors_voice
 description: "装好 Mosquitto 和本 App 即可。传感器自动出现在 HA；语音走 Assist。不必拷自定义集成。"
 url: "https://developers.home-assistant.io/docs/apps/tutorial"
@@ -19,33 +19,15 @@ ports:
   9080/tcp: 9080
   8765/tcp: 8765
 ports_description:
-  9080/tcp: 适配器健康检查（/health）；/mcp 仅调试
+  9080/tcp: 健康检查 /health
   8765/tcp: 设备语音 WebSocket
 options:
+  mqtt_user: ""
+  mqtt_password: ""
+  advertise_ip: ""
   dashscope_api_key: ""
-  mqtt_host: ""
-  mqtt_port: 1883
-  mqtt_user: "dfrobotcd"
-  mqtt_password: "df123456"
-  mqtt_prefix: mcp_sensors
-  advertise_ip: "192.168.1.210"
-  language: zh-CN
-  conversation_agent: ""
-  tts_voice: longanyang
-  tts_volume: 100
-  ha_url: ""
-  ha_token: ""
 schema:
-  dashscope_api_key: password?
-  mqtt_host: str
-  mqtt_port: port
   mqtt_user: str?
   mqtt_password: password?
-  mqtt_prefix: str
   advertise_ip: str?
-  language: str
-  conversation_agent: str?
-  tts_voice: str
-  tts_volume: int(0,100)
-  ha_url: str?
-  ha_token: password?
+  dashscope_api_key: password?

@@ -1,61 +1,22 @@
 configuration:
-  dashscope_api_key:
-    name: 阿里云语音密钥
-    description: >-
-      阿里云百炼/DashScope 的 API Key（以 sk- 开头）。
-      语音识别和播报都靠它。到 dashscope.console.aliyun.com 创建。
-      不填则本 App 不启动语音，只跑传感器网关。
-  mqtt_host:
-    name: MQTT 服务器地址
-    description: >-
-      填 Home Assistant 的局域网 IP，例如 192.168.1.210。
-      不要填 127.0.0.1：那是 HA 自己，设备连上去等于连自己，事件无法上报。
-      本 App 在主机网络下仍会在本机订阅 Mosquitto。
-  mqtt_port:
-    name: MQTT 端口
-    description: Mosquitto 端口，默认 1883。与「Mosquitto broker」App 里一致即可。
   mqtt_user:
     name: MQTT 用户名
     description: >-
-      只给传感器用。以「Mosquitto broker」App 里的登录用户为准，不是 HA 登录名。
-      日志 Not authorized (135) = 和 Mosquitto 不一致。
+      与「Mosquitto broker」里的登录用户一致，不是 HA 账号。
+      Mosquitto 未设用户则留空。
   mqtt_password:
     name: MQTT 密码
-    description: 与上面用户名配对的密码。Mosquitto 未设密码则留空。
-  mqtt_prefix:
-    name: MQTT 主题前缀
-    description: >-
-      设备上报主题前缀，保持 mcp_sensors。本 App 会自动在 HA 里创建实体，不用拷集成。
+    description: 与上面用户名配对。未设密码则留空。
   advertise_ip:
-    name: 局域网 IP（给设备看）
+    name: 局域网 IP（一般不用填）
     description: >-
-      填 Home Assistant 在局域网的 IP，例如 192.168.1.210。
-      设备靠这个地址连语音 ws://IP:8765/ws 和 MQTT。
-      留空会自动探测，容易填成 192.168.122.95（虚拟机内部网），设备连不上。
-  language:
-    name: 对话语言
-    description: 交给 HA Assist 的语言代码。中文用 zh-CN，一般不用改。
-  conversation_agent:
-    name: Assist 对话代理（可选）
+      Home Assistant 在 WiFi/有线网上的地址，例如 192.168.1.210。
+      留空会自动探测。探测不对时再手填。不要填 127.0.0.1。
+  dashscope_api_key:
+    name: 阿里云语音密钥（可选）
     description: >-
-      留空 = 用 Home Assistant 默认助手。
-      只有你在「语音助手」里建了多个代理时才填，例如 conversation.home_assistant。
-  tts_voice:
-    name: 播报音色
-    description: 千问 CosyVoice 音色名，默认 longanyang。可改成长小春等，需账号支持该音色。
-  tts_volume:
-    name: 播报音量
-    description: 0～100。100 最响。只影响合成音量，不是扬声器硬件音量。
-  ha_url:
-    name: Home Assistant 网页地址（语音问答用）
-    description: >-
-      填浏览器能打开 HA 的地址，例如 http://192.168.1.210（80 端口就不要加 :8123）。
-      只给「设备语音 → Assist」用，和 MQTT、爱马仕无关。
-  ha_token:
-    name: HA 长期访问令牌（语音问答用）
-    description: >-
-      右上角用户名 → 安全 → 长期访问令牌。
-      只给 Assist 用。MQTT 账号不要填在这里。
+      不填则只跑传感器，不说话。要设备语音时填百炼 API Key（sk- 开头）。
+      Assist 用本 App 的 Supervisor 权限，不必再填 HA 令牌。
 network:
-  9080/tcp: 传感器 MCP 网关
-  8765/tcp: 设备语音 WebSocket
+  9080/tcp: 健康检查
+  8765/tcp: 设备语音
