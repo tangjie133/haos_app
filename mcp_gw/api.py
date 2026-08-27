@@ -84,7 +84,7 @@ class RegisterApi:
             return _unauthorized()
         device_id = (request.path_params.get("id") or "").strip()
         if self.mqtt is not None:
-            self.mqtt.forget_device(device_id)
+            self.mqtt.suppress_device(device_id)
         ok = self.registry.remove(device_id)
         return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
 

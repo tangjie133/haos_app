@@ -125,6 +125,8 @@ class HaMqttBridge:
         self._mqtt_event_n = 0
         self._was_online: dict[str, bool] = {}
         self._last_snap: dict[str, dict[str, Any]] = {}
+        # HA 里手动删实体后不再自动 Discovery，直到设备重新上线
+        self._suppressed: set[str] = set()
 
     def status(self) -> dict[str, Any]:
         return {
@@ -260,6 +262,9 @@ class HaMqttBridge:
     ) -> None:
         if not config.MQTT_DISCOVERY:
             return
+        device_id = (device_id or "").strip().lower()
+        if device_id in self._suppressed and not force:
+            return
         if not isinstance(ev, dict):
             ev = {}
         ha_topic = f"{config.MQTT_PREFIX}/{device_id}/ha_event"
@@ -362,6 +367,7 @@ class HaMqttBridge:
         if online and prev is False:
             self._seen.pop(device_id, None)
             self.forget_device(device_id)
+            self._suppressed.discard(device_id)
             self._was_online[device_id] = True
             log.info("设备重新在线 id=%s，重新 Discovery", device_id)
             snap = self._last_snap.get(device_id) or {}
@@ -370,7 +376,7 @@ class HaMqttBridge:
         elif (not online) and prev is not False:
             log.info("设备离线 id=%s → %s", device_id, topic)
         self._was_online[device_id] = online
-        await self._ensure_discovery(client, device_id, self._last_snap.get(device_id) or {})
+        # 离线时不重发 Discovery，避免 HA 里删了实体又被加回来
 
     async def publish_snapshot(self, device_id: str, snap: dict[str, Any]) -> None:
         """CoAP 快照写入 MQTT，供 HA 温度/湿度实体使用（固件本身不 MQTT 上报温湿度）。"""
@@ -388,7 +394,7 @@ class HaMqttBridge:
         await self._ensure_discovery(client, device_id, snap, numeric_topic=topic)
 
     def forget_device(self, device_id: str) -> None:
-        """HA/本表删掉设备后，下次快照必须重新发 Discovery。"""
+        """清内存登记。"""
         device_id = (device_id or "").strip().lower()
         if not device_id:
             return
@@ -396,6 +402,15 @@ class HaMqttBridge:
         for k in drop:
             self._discovered.discard(k)
         self._seen.pop(device_id, None)
+
+    def suppress_device(self, device_id: str) -> None:
+        """HA 删除实体/设备：停止自动 Discovery，直到设备重新 online。"""
+        device_id = (device_id or "").strip().lower()
+        if not device_id:
+            return
+        self.forget_device(device_id)
+        self._suppressed.add(device_id)
+        log.info("已抑制自动 Discovery id=%s（设备重新上线后才会再登记）", device_id)
 
     def _on_ha_removed_config(self, topic: str) -> None:
         parts = topic.split("/")
@@ -413,12 +428,14 @@ class HaMqttBridge:
         else:
             if "_" in rest:
                 did = rest.rsplit("_", 1)[0]
-        self.forget_device(did)
-        log.info("HA 已删除 MQTT 设备配置 %s，等待重新登记 id=%s", obj, did)
+        self.suppress_device(did)
+        log.info("HA 已删除 MQTT 配置 %s → 抑制自动登记 id=%s", obj, did)
 
     async def _rediscover_all(self, client: Any) -> None:
         self._discovered.clear()
         for rec in self.registry.list_all():
+            if rec.id in self._suppressed:
+                continue
             snap = self._last_snap.get(rec.id) or {}
             await self._ensure_discovery(client, rec.id, snap, force=True)
 

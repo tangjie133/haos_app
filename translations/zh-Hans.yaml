@@ -2,21 +2,18 @@ configuration:
   mqtt_user:
     name: MQTT 用户名
     description: >-
-      与「Mosquitto broker」里的登录用户一致，不是 HA 账号。
-      Mosquitto 未设用户则留空。
+      与 Mosquitto 登录用户一致（不是 HA 账号）。未设用户则留空。
   mqtt_password:
     name: MQTT 密码
     description: 与上面用户名配对。未设密码则留空。
   advertise_ip:
     name: 局域网 IP（一般不用填）
     description: >-
-      Home Assistant 在 WiFi/有线网上的地址，例如 192.168.1.210。
-      留空会自动探测。探测不对时再手填。不要填 127.0.0.1。
+      例如 192.168.1.210。留空自动探测；不对再手填。不要填 127.0.0.1。
   dashscope_api_key:
     name: 阿里云语音密钥（可选）
     description: >-
-      不填则只跑传感器，不说话。要设备语音时填百炼 API Key（sk- 开头）。
-      Assist 用本 App 的 Supervisor 权限，不必再填 HA 令牌。
+      不填只跑传感器。要设备语音时填百炼 API Key（sk- 开头）。
 network:
   9080/tcp: 健康检查
   8765/tcp: 设备语音

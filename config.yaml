@@ -1,5 +1,5 @@
 name: "MCP Sensors + Voice"
-version: "0.3.0"
+version: "0.4.0"
 slug: mcp_sensors_voice
 description: "装好 Mosquitto 和本 App 即可。传感器自动出现在 HA；语音走 Assist。不必拷自定义集成。"
 url: "https://developers.home-assistant.io/docs/apps/tutorial"
@@ -14,7 +14,8 @@ homeassistant_api: true
 hassio_api: true
 hassio_role: default
 map:
-  - addon_config:rw
+  - type: addon_config
+    read_only: false
 ports:
   9080/tcp: 9080
   8765/tcp: 8765

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import socket
 from contextlib import asynccontextmanager
 
 from starlette.applications import Starlette
@@ -85,6 +87,45 @@ async def lifespan(app: Starlette):
         await STATE.mdns.stop()
 
 
+def _voice_port_open(host: str = "127.0.0.1", port: int | None = None, timeout_s: float = 0.4) -> bool:
+    port = int(port or config.VOICE_WS_PORT)
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
+def _voice_status() -> dict:
+    dash = (os.environ.get("DASHSCOPE_API_KEY") or "").strip()
+    llat = (os.environ.get("HA_LLAT") or os.environ.get("HA_TOKEN") or "").strip()
+    sup = (os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN") or "").strip()
+    port = config.VOICE_WS_PORT
+    ws_url = ""
+    if STATE.mdns.ip:
+        ws_url = f"ws://{STATE.mdns.ip}:{port}{config.VOICE_WS_PATH}"
+    running = _voice_port_open("127.0.0.1", port)
+    return {
+        "enabled": bool(dash),
+        "running": running,
+        "ws": ws_url,
+        "port": port,
+        "path": config.VOICE_WS_PATH,
+        "dashscope_configured": bool(dash),
+        "assist_supervisor_token": bool(sup),
+        "assist_llat_configured": bool(llat),
+        "note": (
+            "未配置 dashscope_api_key 时语音进程不会启动"
+            if not dash
+            else (
+                "8765 未监听：查看 App 日志是否有 voice-bridge 启动失败"
+                if not running
+                else "设备连 ws；说话后看日志 ASR / HA Assist / TTS"
+            )
+        ),
+    }
+
+
 async def health(_: Request) -> JSONResponse:
     online = STATE.registry.list_online()
     return JSONResponse(
@@ -100,6 +141,7 @@ async def health(_: Request) -> JSONResponse:
             "device_protocol": "coap+mqtt-event",
             "sse": True,
             "mdns": STATE.mdns.status(),
+            "voice": _voice_status(),
             "mqtt": {
                 **STATE.mqtt.status(),
                 "device_broker": broker_uri_for_device(),

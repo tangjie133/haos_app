@@ -200,11 +200,15 @@ GW_PID=$!
 
 VOICE_PID=""
 if [[ -n "${DASHSCOPE_API_KEY:-}" ]]; then
-  echo "[haos_app] start voice-bridge :8765 (Assist, no Hermes)"
-  python3 -u /app/voice/bridge.py >>/proc/1/fd/1 2>>/proc/1/fd/2 &
+  sup_len=${#SUPERVISOR_TOKEN}
+  llat_len=${#HA_LLAT}
+  echo "[haos_app] start voice-bridge :8765 dashscope_len=${#DASHSCOPE_API_KEY} supervisor_len=${sup_len} llat_len=${llat_len}"
+  # 显式传入 Supervisor 令牌，避免子进程读不到 s6 环境
+  env SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}" HASSIO_TOKEN="${HASSIO_TOKEN:-}" \
+    python3 -u /app/voice/bridge.py >>/proc/1/fd/1 2>>/proc/1/fd/2 &
   VOICE_PID=$!
 else
-  echo "[haos_app] skip voice-bridge: 未配置 dashscope_api_key（mcp_gw 仍运行）"
+  echo "[haos_app] skip voice-bridge: 未配置 dashscope_api_key（mcp_gw 仍运行；App 配置里填 sk- 密钥后重启）"
 fi
 
 term() {

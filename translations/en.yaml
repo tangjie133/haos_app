@@ -1,18 +1,17 @@
 configuration:
   mqtt_user:
     name: MQTT username
-    description: Same as the Mosquitto add-on. Leave empty if anonymous is allowed.
+    description: Same as Mosquitto. Leave empty if anonymous is allowed.
   mqtt_password:
     name: MQTT password
     description: Leave empty if Mosquitto has no password.
   advertise_ip:
     name: LAN IP (usually auto)
     description: >-
-      Home Assistant LAN address, e.g. 192.168.1.210. Leave empty to auto-detect.
-      Do not use 127.0.0.1.
+      e.g. 192.168.1.210. Leave empty to auto-detect. Do not use 127.0.0.1.
   dashscope_api_key:
     name: DashScope API key (optional)
-    description: Leave empty for sensors only. Required for device voice (sk-...). Assist uses the Supervisor token; no HA long-lived token needed.
+    description: Leave empty for sensors only. Required for device voice (sk-...).
 network:
   9080/tcp: Health
   8765/tcp: Device voice
