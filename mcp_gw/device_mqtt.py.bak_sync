@@ -1,0 +1,78 @@
+"""MQTT broker provisioning fallback for devices.
+
+Primary path remains mDNS _mcp-gw TXT mqtt=.
+Fallback: when device reports empty mqtt_broker, push broker via HTTP /api/wifi action=mqtt.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import httpx
+
+from . import config
+
+log = logging.getLogger("mcp_gw.device_mqtt")
+
+
+def _is_loopback(host: str) -> bool:
+    h = (host or "").strip().lower()
+    if h.startswith("mqtt://"):
+        h = h[7:]
+    elif h.startswith("mqtts://"):
+        h = h[8:]
+    h = h.split("/")[0]
+    if h.startswith("["):
+        h = h.split("]")[0].lstrip("[")
+    else:
+        h = h.split(":")[0]
+    return (not h) or h in ("127.0.0.1", "localhost", "0.0.0.0", "::1") or h.startswith("127.")
+
+
+def broker_uri_for_device(lan_ip: str) -> str:
+    raw = (config.MQTT_HOST or "").strip()
+    if not raw:
+        return ""
+    host = lan_ip if _is_loopback(raw) else raw
+    if host.startswith("mqtt://"):
+        host = host[7:].split("/")[0].split(":")[0]
+    elif host.startswith("mqtts://"):
+        host = host[8:].split("/")[0].split(":")[0]
+    if _is_loopback(host):
+        return ""
+    return f"mqtt://{host}:{int(config.MQTT_PORT or 1883)}"
+
+
+async def push_if_missing(device_ip: str) -> bool:
+    """Push broker only when device has empty mqtt_broker."""
+    uri = broker_uri_for_device(device_ip)
+    if not uri:
+        log.warning("skip mqtt push: invalid broker host (check MQTT_HOST / advertise_ip)")
+        return False
+    wifi_url = f"http://{device_ip}/api/wifi"
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            r = await client.get(wifi_url)
+            r.raise_for_status()
+            info: Any = r.json()
+            if isinstance(info, dict):
+                existing = str(info.get("mqtt_broker") or "").strip()
+                if existing:
+                    return True
+            body = {
+                "action": "mqtt",
+                "broker": uri,
+                "user": (config.MQTT_USER or "").strip(),
+                "password": (config.MQTT_PASSWORD or "").strip(),
+            }
+            w = await client.post(wifi_url, json=body)
+            txt = (w.text or "")[:180]
+            if w.status_code >= 400:
+                log.warning("mqtt push failed %s status=%s body=%s", device_ip, w.status_code, txt)
+                return False
+            log.info("mqtt pushed %s -> %s", uri, device_ip)
+            return True
+    except Exception as e:
+        log.debug("mqtt push skip %s: %s", device_ip, e)
+        return False

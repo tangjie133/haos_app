@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "MCP Sensors",
+        "description": "订阅 MQTT 前缀/+/event。多设备自动出实体，无需逐台确认。",
+        "data": {
+          "prefix": "MQTT 主题前缀"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "已经配置过"
+    }
+  }
+}

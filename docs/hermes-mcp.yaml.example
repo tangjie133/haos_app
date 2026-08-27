@@ -1,0 +1,16 @@
+# 爱马仕：连 Home Assistant 官方 MCP（不是 App :9080）
+
+把 token 换成你在 HA 创建的长期访问令牌。
+若当前爱马仕版本不识别 headers，请用 mcp-proxy 或查阅爱马仕 MCP HTTP 鉴权说明。
+
+```yaml
+mcp_servers:
+  homeassistant:
+    url: http://192.168.1.210/api/mcp
+    enabled: true
+    skip_preflight: true
+    headers:
+      Authorization: Bearer 在此粘贴长期访问令牌
+```
+
+旧配置 `url: http://127.0.0.1:9080/mcp` 指向宿主机/适配器调试口，不要再当主数据源。

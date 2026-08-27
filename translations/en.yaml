@@ -1,0 +1,45 @@
+configuration:
+  dashscope_api_key:
+    name: DashScope API key
+    description: Alibaba DashScope key (sk-...) for ASR/TTS. Leave empty to run mcp_gw only.
+  mqtt_host:
+    name: MQTT host
+    description: >-
+      HA LAN IP for devices, e.g. 192.168.1.210. Do not use 127.0.0.1
+      or the ESP32 cannot publish events. The App still connects to Mosquitto locally.
+  mqtt_port:
+    name: MQTT port
+    description: Default 1883.
+  mqtt_user:
+    name: MQTT username
+    description: Same as Mosquitto add-on. Empty if anonymous is allowed.
+  mqtt_password:
+    name: MQTT password
+    description: Leave empty if Mosquitto has no password.
+  mqtt_prefix:
+    name: MQTT topic prefix
+    description: Keep mcp_sensors unless firmware was changed.
+  advertise_ip:
+    name: LAN IP for devices
+    description: Home Assistant LAN IP, e.g. 192.168.1.210. Do not use 192.168.122.x.
+  language:
+    name: Assist language
+    description: zh-CN for Chinese.
+  conversation_agent:
+    name: Conversation agent
+    description: Optional. Empty uses the default HA Assist agent.
+  tts_voice:
+    name: TTS voice
+    description: CosyVoice voice id, default longanyang.
+  tts_volume:
+    name: TTS volume
+    description: 0–100.
+  ha_url:
+    name: Home Assistant URL (voice / Assist)
+    description: The URL you open in a browser, e.g. http://192.168.1.210 (port 80, not always 8123).
+  ha_token:
+    name: Long-lived access token (voice / Assist)
+    description: Profile → Security → Long-lived access token. Not used for MQTT.
+network:
+  9080/tcp: mcp_gw
+  8765/tcp: Voice WebSocket

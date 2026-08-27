@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "MCP Sensors",
+        "description": "Subscribe to mqtt prefix/+/event. Devices appear automatically; no per-device confirm.",
+        "data": {
+          "prefix": "MQTT topic prefix"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Already configured"
+    }
+  }
+}
