@@ -1,7 +1,12 @@
-"""Home Assistant Conversation / Assist — 替代爱马仕。"""
+"""Home Assistant Conversation / Assist — 替代爱马仕。
+
+对话代理：优先读「首选 Assist 流水线」的 conversation_engine（与网页 Assist 一致），
+不靠名称关键字猜。可选环境变量 HA_AGENT_ID 覆盖。
+"""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any, Optional
@@ -11,6 +16,7 @@ import httpx
 log = logging.getLogger("bridge.ha")
 
 _working: Optional[tuple[str, str]] = None  # (api_base, token)
+_resolved_agent: Optional[str] = None  # 缓存：首选流水线上的 conversation_engine
 
 
 def _env(name: str, default: str = "") -> str:
@@ -66,6 +72,15 @@ def _api_base_from(url: str) -> str:
     if base.endswith("/api"):
         return base
     return f"{base}/api"
+
+
+def _ws_url_from_api(api_base: str) -> str:
+    base = (api_base or "").rstrip("/")
+    if base.startswith("https://"):
+        return "wss://" + base[len("https://") :] + "/websocket"
+    if base.startswith("http://"):
+        return "ws://" + base[len("http://") :] + "/websocket"
+    return f"ws://{base}/websocket"
 
 
 def _attempts() -> list[tuple[str, str, str]]:
@@ -142,6 +157,131 @@ def log_auth_status() -> None:
         )
 
 
+def _ws_command(api_base: str, token: str, msg_type: str, **extra: Any) -> Any:
+    """同步调用 HA WebSocket 命令，返回 result 字段。"""
+    try:
+        from websocket import create_connection
+    except ImportError as e:
+        raise RuntimeError("websocket-client not installed") from e
+
+    ws_url = _ws_url_from_api(api_base)
+    ws = create_connection(
+        ws_url,
+        timeout=8,
+        header=[f"Authorization: Bearer {token}"],
+    )
+    try:
+        auth_req = json.loads(ws.recv())
+        if auth_req.get("type") != "auth_required":
+            raise RuntimeError(f"unexpected first ws msg: {auth_req.get('type')}")
+        ws.send(json.dumps({"type": "auth", "access_token": token}))
+        auth_ok = json.loads(ws.recv())
+        if auth_ok.get("type") != "auth_ok":
+            raise RuntimeError(f"ws auth failed: {auth_ok}")
+        payload = {"id": 1, "type": msg_type, **extra}
+        ws.send(json.dumps(payload))
+        while True:
+            raw = ws.recv()
+            msg = json.loads(raw)
+            if msg.get("id") != 1:
+                continue
+            if not msg.get("success", True) and msg.get("type") == "result":
+                err = msg.get("error") or {}
+                raise RuntimeError(err.get("message") or str(err) or "ws command failed")
+            if msg.get("type") == "result":
+                if msg.get("success") is False:
+                    err = msg.get("error") or {}
+                    raise RuntimeError(err.get("message") or str(err) or "ws command failed")
+                return msg.get("result")
+            raise RuntimeError(f"unexpected ws reply: {msg.get('type')}")
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+
+def _agent_from_preferred_pipeline(api_base: str, token: str) -> str:
+    """读首选 Assist 流水线的 conversation_engine（与网页默认语音助手一致）。"""
+    # 1) get 不带 id → 首选流水线
+    try:
+        pipe = _ws_command(api_base, token, "assist_pipeline/pipeline/get")
+        if isinstance(pipe, dict):
+            engine = str(pipe.get("conversation_engine") or "").strip()
+            if engine:
+                log.info(
+                    "首选流水线 conversation_engine=%s name=%s id=%s",
+                    engine,
+                    pipe.get("name") or "-",
+                    pipe.get("id") or "-",
+                )
+                return engine
+    except Exception as e:
+        log.debug("assist_pipeline/pipeline/get: %s", e)
+
+    # 2) list → preferred_pipeline + pipelines[].conversation_engine
+    try:
+        data = _ws_command(api_base, token, "assist_pipeline/pipeline/list")
+        if not isinstance(data, dict):
+            return ""
+        preferred = str(data.get("preferred_pipeline") or "").strip()
+        pipelines = data.get("pipelines") or []
+        if preferred.startswith("conversation.") and preferred:
+            log.info("首选流水线即 conversation 实体 agent_id=%s", preferred)
+            return preferred
+        if isinstance(pipelines, list):
+            for p in pipelines:
+                if not isinstance(p, dict):
+                    continue
+                if preferred and str(p.get("id") or "") != preferred:
+                    continue
+                engine = str(p.get("conversation_engine") or "").strip()
+                if engine:
+                    log.info(
+                        "pipeline/list 首选 conversation_engine=%s preferred=%s name=%s",
+                        engine,
+                        preferred or "-",
+                        p.get("name") or "-",
+                    )
+                    return engine
+            # preferred 对不上时，仍取列表第一项的引擎不如静默失败
+    except Exception as e:
+        log.debug("assist_pipeline/pipeline/list: %s", e)
+
+    # 3) conversation/agent/list 的 default_agent（旧版字段，有则用）
+    try:
+        data = _ws_command(api_base, token, "conversation/agent/list")
+        if isinstance(data, dict):
+            default = str(data.get("default_agent") or "").strip()
+            if default:
+                log.info("conversation/agent/list default_agent=%s", default)
+                return default
+    except Exception as e:
+        log.debug("conversation/agent/list: %s", e)
+
+    return ""
+
+
+def _discover_agent_id(api_base: str, token: str) -> str:
+    """自动获取与网页 Assist 相同的对话代理；不靠名称查表。"""
+    global _resolved_agent
+    configured = _env("HA_AGENT_ID")
+    if configured:
+        return configured
+    if _resolved_agent:
+        return _resolved_agent
+
+    agent = _agent_from_preferred_pipeline(api_base, token)
+    if agent:
+        _resolved_agent = agent
+        return agent
+    log.warning(
+        "未能从首选 Assist 流水线读取 conversation_engine；"
+        "将不传 agent_id（HA 默认内置意图）。可在 App 填写 conversation_agent 覆盖"
+    )
+    return ""
+
+
 def ask_ha(
     user_text: str, conversation_id: Optional[str] = None
 ) -> tuple[str, Optional[str], bool]:
@@ -162,42 +302,49 @@ def ask_ha(
         )
 
     language = _env("HA_LANGUAGE", "zh-CN") or "zh-CN"
-    agent_id = _env("HA_AGENT_ID")
-    timeout_s = float(_env("HA_TIMEOUT_S", "12") or "12")
-    body: dict[str, Any] = {"text": text, "language": language}
-    if conversation_id:
-        body["conversation_id"] = conversation_id
-    if agent_id:
-        body["agent_id"] = agent_id
+    timeout_s = float(_env("HA_TIMEOUT_S", "45") or "45")
 
     last_err: Optional[str] = None
     saw_401 = False
     with httpx.Client(timeout=timeout_s) as client:
+
+        def _call(api_base: str, token: str) -> dict[str, Any]:
+            agent_id = _discover_agent_id(api_base, token)
+            body: dict[str, Any] = {"text": text, "language": language}
+            if conversation_id:
+                body["conversation_id"] = conversation_id
+            if agent_id:
+                body["agent_id"] = agent_id
+            else:
+                log.warning("未指定 agent_id，HA 将用内置意图引擎（可能答非所问）")
+            url = f"{api_base}/conversation/process"
+            data = _post(client, url, token, body)
+            log.info("HA Assist agent=%s", agent_id or "(default home_assistant)")
+            return data
+
         if _working:
             api_base, token = _working
-            url = f"{api_base}/conversation/process"
             try:
-                data = _post(client, url, token, body)
+                data = _call(api_base, token)
                 return _ok(data, conversation_id, api_base)
             except Exception as e:
                 last_err = str(e)
-                log.warning("缓存地址失效 url=%s: %s", url, e)
+                log.warning("缓存地址失效 api=%s: %s", api_base, e)
                 _working = None
 
         for label, raw, token in _attempts():
             api_base = _api_base_from(raw)
-            url = f"{api_base}/conversation/process"
             try:
-                data = _post(client, url, token, body)
+                data = _call(api_base, token)
             except httpx.HTTPStatusError as e:
                 last_err = str(e)
                 if e.response is not None and e.response.status_code == 401:
                     saw_401 = True
-                log.warning("调用 HA Assist 失败 [%s] url=%s: %s", label, url, e)
+                log.warning("调用 HA Assist 失败 [%s] api=%s: %s", label, api_base, e)
                 continue
             except Exception as e:
                 last_err = str(e)
-                log.warning("调用 HA Assist 失败 [%s] url=%s: %s", label, url, e)
+                log.warning("调用 HA Assist 失败 [%s] api=%s: %s", label, api_base, e)
                 continue
             _working = (api_base, token)
             return _ok(data, conversation_id, api_base)

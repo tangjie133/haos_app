@@ -61,12 +61,13 @@ class CoapSnapshotPoller:
         return None
 
     async def _ensure_device_mqtt(self, rec: Any, host: str) -> None:
-        """mDNS TXT 之外：单播 POST /api/wifi action=mqtt（与固件 mqtt_discover_apply 同步）。"""
+        """mDNS TXT 之外：单播 POST /api/wifi action=mqtt（含 ws= 语音地址）。"""
         from .device_mqtt import ensure_device_mqtt
         ok = await ensure_device_mqtt(host)
         if not ok:
             log.warning(
-                "id=%s %s MQTT 告知失败：烧录含 action=mqtt 的固件，插件 advertise_ip 填 HA 局域网 IP",
+                "id=%s %s MQTT/语音告知失败：固件需支持 action=mqtt（含 ws=）；"
+                "advertise_ip 填 HA 局域网 IP",
                 rec.id,
                 host,
             )

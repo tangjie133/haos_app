@@ -1,5 +1,5 @@
 name: "MCP Sensors + Voice"
-version: "0.4.0"
+version: "0.4.2"
 slug: mcp_sensors_voice
 description: "装好 Mosquitto 和本 App 即可。传感器自动出现在 HA；语音走 Assist。不必拷自定义集成。"
 url: "https://developers.home-assistant.io/docs/apps/tutorial"
@@ -27,8 +27,10 @@ options:
   mqtt_password: ""
   advertise_ip: ""
   dashscope_api_key: ""
+  conversation_agent: ""
 schema:
   mqtt_user: str?
   mqtt_password: password?
   advertise_ip: str?
   dashscope_api_key: password?
+  conversation_agent: str?

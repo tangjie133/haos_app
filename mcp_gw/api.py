@@ -9,7 +9,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import config
-from .device_mqtt import broker_uri_for_device, config_fingerprint, push_all, push_if_missing
+from .device_mqtt import (
+    broker_uri_for_device,
+    config_fingerprint,
+    push_all,
+    push_if_missing,
+    voice_ws_for_device,
+)
 from .registry import DeviceRegistry
 
 log = logging.getLogger("mcp_gw.api")
@@ -115,11 +121,19 @@ class RegisterApi:
         ips = [(r.coap_host or "").strip() for r in recs if (r.coap_host or "").strip()]
         results = await push_all(ips, force=force)
         ok_n = sum(1 for v in results.values() if v)
-        log.info("mqtt push api force=%s ok=%s/%s uri=%s", force, ok_n, len(results), broker_uri_for_device())
+        log.info(
+            "mqtt/voice push api force=%s ok=%s/%s uri=%s ws=%s",
+            force,
+            ok_n,
+            len(results),
+            broker_uri_for_device(),
+            voice_ws_for_device(),
+        )
         return JSONResponse(
             {
                 "ok": ok_n == len(results) and len(results) > 0,
                 "broker": broker_uri_for_device(),
+                "voice_ws": voice_ws_for_device() or None,
                 "user": (config.MQTT_USER or "").strip() or None,
                 "fingerprint": config_fingerprint().split("\n")[0],
                 "pushed": results,

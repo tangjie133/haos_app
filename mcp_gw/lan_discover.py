@@ -161,6 +161,10 @@ async def scan_http_hubs(registry: DeviceRegistry) -> int:
         async with lock:
             found += 1
         log.info("LAN 发现枢纽 id=%s ip=%s", did, hip)
+        # 与 mDNS 发现对齐：登记后立刻推 MQTT + 语音 ws（不等快照轮询）
+        from .device_mqtt import push_if_missing
+
+        asyncio.create_task(push_if_missing(hip), name=f"mqtt-push-lan-{did}")
 
     arp_jobs = [one(ip, mac) for ip, mac in candidates if mac]
     if arp_jobs:

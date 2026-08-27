@@ -38,7 +38,7 @@ TOOL_SEP = "__"
 
 PROTOCOL_VERSION = "2025-03-26"
 SERVER_NAME = "mcp-sensors-gw"
-SERVER_VERSION = "0.5.0"
+SERVER_VERSION = "0.4.2"
 
 # 订设备事件。由本 App 代发 homeassistant/.../config，小白不必拷自定义集成。
 MQTT_HOST = (os.environ.get("MQTT_HOST") or "").strip()

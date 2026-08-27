@@ -14,6 +14,11 @@ configuration:
     name: 阿里云语音密钥（可选）
     description: >-
       不填只跑传感器。要设备语音时填百炼 API Key（sk- 开头）。
+  conversation_agent:
+    name: 对话代理 ID（可选覆盖）
+    description: >-
+      一般留空：自动读取「设置 → 语音助手」里首选流水线的对话代理。
+      仅当自动读取失败时再手填，例如 conversation.xxxxx。
 network:
   9080/tcp: 健康检查
   8765/tcp: 设备语音

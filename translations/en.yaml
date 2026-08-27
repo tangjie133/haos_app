@@ -12,6 +12,11 @@ configuration:
   dashscope_api_key:
     name: DashScope API key (optional)
     description: Leave empty for sensors only. Required for device voice (sk-...).
+  conversation_agent:
+    name: Conversation agent ID (optional override)
+    description: >-
+      Leave empty to use the preferred Assist pipeline's conversation agent.
+      Set only if auto-detect fails, e.g. conversation.xxxxx.
 network:
   9080/tcp: Health
   8765/tcp: Device voice

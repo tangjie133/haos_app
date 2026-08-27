@@ -4,10 +4,13 @@ _mcp-gw._tcp : MCP_GW_PORT
   TXT ws/mqtt/ver —— ws= 音频回退；mqtt= 事件 broker。不要塞传感器、不要 path/mcp。
 _voice-ws._tcp : VOICE_WS_PORT
   设备优先 browse 此项拿 PCM 对端。仍是 WS 服务端在本机/HA，设备当客户端。
+
+用 InterfaceChoice.All + IPv4，并周期性 update，避免交换机丢掉组播状态后设备再也听不见。
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import socket
 from typing import Any
@@ -18,6 +21,9 @@ log = logging.getLogger("mcp_gw.mdns")
 
 SERVICE_TYPE = "_mcp-gw._tcp.local."
 SERVICE_NAME = f"{config.SERVER_NAME}.{SERVICE_TYPE}"
+VOICE_TYPE = "_voice-ws._tcp.local."
+VOICE_NAME = f"mcp-sensors-voice.{VOICE_TYPE}"
+REANNOUNCE_S = 45.0
 
 
 def _is_loopback(host: str) -> bool:
@@ -51,6 +57,20 @@ def guess_lan_ip() -> str:
     return ""
 
 
+def make_async_zeroconf() -> Any:
+    """Prefer all IPv4 interfaces — HAOS host_network 下默认接口常漏网卡。"""
+    from zeroconf import IPVersion, InterfaceChoice
+    from zeroconf.asyncio import AsyncZeroconf
+
+    try:
+        return AsyncZeroconf(interfaces=InterfaceChoice.All, ip_version=IPVersion.V4Only)
+    except TypeError:
+        try:
+            return AsyncZeroconf(interfaces=InterfaceChoice.All)
+        except TypeError:
+            return AsyncZeroconf()
+
+
 class MdnsAdvertiser:
     """asyncio 友好的 mDNS 广播（配合 uvicorn）。"""
 
@@ -58,10 +78,13 @@ class MdnsAdvertiser:
         self._azc: Any = None
         self._info: Any = None
         self._voice_info: Any = None
+        self._reannounce_task: asyncio.Task[Any] | None = None
         self.ip = ""
         self.mqtt_uri = ""
+        self.voice_ws = ""
         self.enabled = False
         self.last_error = ""
+        self.reannounce_count = 0
 
     async def start(self) -> bool:
         if not config.MDNS_ENABLE:
@@ -69,7 +92,6 @@ class MdnsAdvertiser:
             return False
         try:
             from zeroconf import ServiceInfo
-            from zeroconf.asyncio import AsyncZeroconf
         except ImportError:
             self.last_error = "zeroconf not installed"
             log.warning("%s; skip mDNS advertise", self.last_error)
@@ -81,6 +103,7 @@ class MdnsAdvertiser:
             log.error("%s", self.last_error)
             return False
         voice_ws = f"ws://{self.ip}:{config.VOICE_WS_PORT}{config.VOICE_WS_PATH}"
+        self.voice_ws = voice_ws
         raw_mqtt = (config.MQTT_HOST or "").strip()
         mqtt_uri = ""
         if raw_mqtt or self.ip:
@@ -112,13 +135,15 @@ class MdnsAdvertiser:
                 port=int(config.PORT),
                 properties=props,
                 server=f"{config.SERVER_NAME}.local.",
+                host_ttl=120,
+                other_ttl=120,
             )
-            azc = AsyncZeroconf()
+            azc = make_async_zeroconf()
             await azc.async_register_service(info)
             # 设备优先 browse _voice-ws；TXT 可空，端口即 WS。禁止在此塞传感器 JSON。
             voice_info = ServiceInfo(
-                "_voice-ws._tcp.local.",
-                f"mcp-sensors-voice._voice-ws._tcp.local.",
+                VOICE_TYPE,
+                VOICE_NAME,
                 addresses=[socket.inet_aton(self.ip)],
                 port=int(config.VOICE_WS_PORT),
                 properties={
@@ -126,6 +151,8 @@ class MdnsAdvertiser:
                     b"path": config.VOICE_WS_PATH.encode("utf-8"),
                 },
                 server=f"{config.SERVER_NAME}-voice.local.",
+                host_ttl=120,
+                other_ttl=120,
             )
             await azc.async_register_service(voice_info)
             self._azc = azc
@@ -133,12 +160,14 @@ class MdnsAdvertiser:
             self._voice_info = voice_info
             self.enabled = True
             self.last_error = ""
+            self._reannounce_task = asyncio.create_task(self._reannounce_loop(), name="mdns-reannounce")
             log.info(
-                "mDNS advertised %s and _voice-ws at %s voice=%s mqtt=%s",
+                "mDNS advertised %s and _voice-ws at %s voice=%s mqtt=%s (All/IPv4 + reannounce %.0fs)",
                 SERVICE_NAME,
                 self.ip,
                 voice_ws,
                 mqtt_uri or "-",
+                REANNOUNCE_S,
             )
             return True
         except Exception as e:
@@ -147,7 +176,30 @@ class MdnsAdvertiser:
             await self.stop()
             return False
 
+    async def _reannounce_loop(self) -> None:
+        while True:
+            await asyncio.sleep(REANNOUNCE_S)
+            if not self._azc or not self._info:
+                continue
+            try:
+                await self._azc.async_update_service(self._info)
+                if self._voice_info:
+                    await self._azc.async_update_service(self._voice_info)
+                self.reannounce_count += 1
+                log.debug("mDNS reannounce #%s ip=%s", self.reannounce_count, self.ip)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("mDNS reannounce failed: %s", e)
+
     async def stop(self) -> None:
+        if self._reannounce_task:
+            self._reannounce_task.cancel()
+            try:
+                await self._reannounce_task
+            except asyncio.CancelledError:
+                pass
+            self._reannounce_task = None
         if self._azc and self._info:
             try:
                 await self._azc.async_unregister_service(self._info)
@@ -169,16 +221,18 @@ class MdnsAdvertiser:
         self.enabled = False
 
     def status(self) -> dict:
-        voice = ""
-        if self.ip:
-            voice = f"ws://{self.ip}:{config.VOICE_WS_PORT}{config.VOICE_WS_PATH}"
+        voice = self.voice_ws or (
+            f"ws://{self.ip}:{config.VOICE_WS_PORT}{config.VOICE_WS_PATH}" if self.ip else ""
+        )
         return {
             "enabled": self.enabled,
             "service": SERVICE_TYPE.rstrip("."),
+            "voice_service": VOICE_TYPE.rstrip("."),
             "name": config.SERVER_NAME,
             "ip": self.ip,
             "port": config.PORT,
             "voice_ws": voice,
             "mqtt": self.mqtt_uri,
+            "reannounce_count": self.reannounce_count,
             "last_error": self.last_error,
         }

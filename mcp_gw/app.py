@@ -16,7 +16,12 @@ from .aggregator import AggregatorMcp
 from .api import RegisterApi
 from .coap_client import DeviceCoapClient
 from .coap_poll import CoapSnapshotPoller
-from .device_mqtt import broker_uri_for_device, consume_config_change, push_if_missing
+from .device_mqtt import (
+    broker_uri_for_device,
+    consume_config_change,
+    push_if_missing,
+    voice_ws_for_device,
+)
 from .mdns_advertise import MdnsAdvertiser
 from .mdns_devices import MdnsDeviceBrowser
 from .mqtt_ha import HaMqttBridge
@@ -27,7 +32,7 @@ log = logging.getLogger("mcp_gw")
 
 
 async def _mqtt_push_loop() -> None:
-    """Periodic HTTP MQTT fallback; force when MQTT options fingerprint changes."""
+    """Periodic HTTP MQTT+voice fallback; force when options fingerprint changes."""
     while True:
         try:
             force = consume_config_change()
@@ -38,7 +43,7 @@ async def _mqtt_push_loop() -> None:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            log.debug("mqtt push loop: %s", e)
+            log.debug("mqtt/voice push loop: %s", e)
         await asyncio.sleep(30)
 
 
@@ -141,10 +146,12 @@ async def health(_: Request) -> JSONResponse:
             "device_protocol": "coap+mqtt-event",
             "sse": True,
             "mdns": STATE.mdns.status(),
+            "mdns_browse": STATE.mdns_dev.status(),
             "voice": _voice_status(),
             "mqtt": {
                 **STATE.mqtt.status(),
                 "device_broker": broker_uri_for_device(),
+                "device_voice_ws": voice_ws_for_device(),
                 "device_auth_configured": bool((config.MQTT_USER or "").strip()),
             },
         }
